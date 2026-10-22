@@ -1,0 +1,21 @@
+{
+    "version":  4,
+    "urlActualizaciones":  "",
+    "archivos":  [
+                     "app.js",
+                     "config-nube.js",
+                     "formato_inventario.xlsx",
+                     "importar.js",
+                     "index.html",
+                     "logo-192.png",
+                     "logo.png",
+                     "manifest.webmanifest",
+                     "nube.js",
+                     "styles.css",
+                     "sw.js",
+                     "lib/firebase-app-compat.js",
+                     "lib/firebase-auth-compat.js",
+                     "lib/firebase-firestore-compat.js",
+                     "lib/xlsx.full.min.js"
+                 ]
+}

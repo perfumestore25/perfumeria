@@ -1,6 +1,6 @@
 {
-    "version":  4,
-    "urlActualizaciones":  "",
+    "version":  5,
+    "urlActualizaciones":  "https://perfumestore25.github.io/perfumeria/",
     "archivos":  [
                      "app.js",
                      "config-nube.js",

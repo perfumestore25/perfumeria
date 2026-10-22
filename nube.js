@@ -248,6 +248,16 @@ async function datosCompletos() {
 // Sube un respaldo (o los datos que el teléfono tenía antes de usar la nube). Combina con lo que ya existe.
 async function subirANube(datos) {
   const ops = [];
+  // La nube arranca con un admin y productos base; si los datos que se suben traen los suyos
+  // (mismo usuario, o mismo tipo y nombre de producto sin stock), se borran los de la nube para no duplicarlos
+  const claveU = u => String(u.usuario).toLowerCase();
+  const claveI = i => `${i.tipo}|${String(i.nombre).trim().toLowerCase()}`;
+  const ids = col => new Set((datos[col] || []).map(x => x.id));
+  const claves = (col, f) => new Set((datos[col] || []).map(f));
+  const idsU = ids('usuarios'), clU = claves('usuarios', claveU);
+  const idsI = ids('insumos'), clI = claves('insumos', claveI);
+  for (const u of db.usuarios) if (!idsU.has(u.id) && clU.has(claveU(u))) ops.push(b => b.delete(NUBE.fs.collection('usuarios').doc(u.id)));
+  for (const i of db.insumos) if (!idsI.has(i.id) && clI.has(claveI(i)) && !Number(i.stock)) ops.push(b => b.delete(NUBE.fs.collection('insumos').doc(i.id)));
   ops.push(b => b.set(NUBE.fs.collection('config').doc('general'), limpiar(datos.config), { merge: true }));
   for (const col of COLECCIONES) for (const x of datos[col] || []) ops.push(b => b.set(NUBE.fs.collection(col).doc(x.id), limpiar(x)));
   for (const m of datos.movimientos || []) {

@@ -106,6 +106,7 @@ function renderConectar() {
         ${campo('Contraseña', 'clave', '', 'type="password" autocomplete="current-password" required')}
         <button class="btn primary block grande">Conectar</button>
       </form>
+      ${avisoInstalarIOS()}
     </div>`;
   $('#f-conectar').onsubmit = e => {
     e.preventDefault();

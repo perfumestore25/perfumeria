@@ -283,6 +283,10 @@ async function descargarFormato() {
     NATIVO.guardarArchivoBase64(nombre, aBase64(buf), XLSX_MIME);
     return;
   }
+  if (esIOS()) { // iPhone: se guarda con la hoja de Compartir
+    const blob = await (await fetch('formato_inventario.xlsx')).blob();
+    return descargar(nombre, blob, XLSX_MIME);
+  }
   const a = document.createElement('a');
   a.href = 'formato_inventario.xlsx';
   a.download = nombre;

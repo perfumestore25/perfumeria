@@ -1,6 +1,6 @@
 // Cache para uso sin conexión cuando se usa como app web (PWA)
-const CACHE = 'perfumeria-v3';
-const ARCHIVOS = ['./', './index.html', './styles.css', './app.js', './importar.js', './nube.js', './config-nube.js', './logo.png', './logo-192.png',
+const CACHE = 'perfumeria-v6';
+const ARCHIVOS = ['./', './index.html', './styles.css', './app.js', './importar.js', './nube.js', './config-nube.js', './logo.png', './logo-192.png', './apple-touch-icon.png',
   './manifest.webmanifest', './formato_inventario.xlsx', './lib/xlsx.full.min.js',
   './lib/firebase-app-compat.js', './lib/firebase-auth-compat.js', './lib/firebase-firestore-compat.js'];
 

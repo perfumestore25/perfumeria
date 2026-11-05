@@ -17,6 +17,7 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
+html { background: #000; -webkit-text-size-adjust: 100%; }
 body {
   background: var(--fondo);
   color: var(--texto);
@@ -40,13 +41,17 @@ small, .small { font-size: .82rem; }
   display: flex; align-items: center; gap: .5rem;
   background: #000; color: var(--oro);
   padding: .5rem .75rem; border-bottom: 1px solid var(--oro-osc);
+  /* iPhone instalado: la barra de estado queda encima del contenido */
+  padding-top: calc(.5rem + env(safe-area-inset-top));
+  padding-left: calc(.75rem + env(safe-area-inset-left));
+  padding-right: calc(.75rem + env(safe-area-inset-right));
 }
 .topbar .logo-mini { width: 34px; height: 34px; border-radius: 50%; }
 .topbar h1 { flex: 1; font-size: 1.08rem; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--oro-claro); }
 .chip-user { border: 1px solid var(--oro-osc); color: var(--oro-claro); border-radius: 20px; padding: .12rem .6rem; font-size: .76rem; white-space: nowrap; }
 .estado-red { display: none; background: #E8A33D; color: #000; border-radius: 20px; padding: .1rem .55rem; font-size: .72rem; font-weight: 700; white-space: nowrap; }
 body.sin-red .estado-red { display: inline-block; }
-main#vista { max-width: 760px; margin: 0 auto; padding: .75rem .75rem 5.5rem; }
+main#vista { max-width: 760px; margin: 0 auto; padding: .75rem .75rem calc(5.5rem + env(safe-area-inset-bottom)); }
 
 nav.bottom {
   position: fixed; bottom: 0; left: 0; right: 0; z-index: 10;
@@ -66,7 +71,7 @@ nav.bottom a.activo { color: var(--oro); font-weight: 600; }
   width: min(300px, 82vw); height: 100%; background: var(--card); overflow-y: auto;
   display: flex; flex-direction: column; padding-bottom: 1rem; border-right: 1px solid var(--oro-osc);
 }
-.drawer-head { background: #000; padding: 1rem; text-align: center; border-bottom: 1px solid var(--oro-osc); }
+.drawer-head { background: #000; padding: 1rem; padding-top: calc(1rem + env(safe-area-inset-top)); text-align: center; border-bottom: 1px solid var(--oro-osc); }
 .drawer-head img { width: 110px; height: 110px; display: block; margin: 0 auto .4rem; }
 .drawer-head small { color: var(--suave); }
 .drawer-panel a { padding: .8rem 1.1rem; color: var(--texto); text-decoration: none; font-size: 1rem; }
@@ -205,12 +210,12 @@ table.tabla tr.tot td { font-weight: 700; font-size: 1.05rem; border-bottom: 0; 
 .modal-body { padding: 1rem; overflow-y: auto; padding-bottom: calc(1rem + env(safe-area-inset-bottom)); }
 .solo-frasco, .solo-venta, .solo-nueva { display: none; }
 
-#toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%) translateY(20px); background: var(--oro); color: #000; font-weight: 600; padding: .6rem 1rem; border-radius: 10px; opacity: 0; pointer-events: none; transition: .25s; z-index: 50; max-width: 90vw; text-align: center; }
+#toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(20px); background: var(--oro); color: #000; font-weight: 600; padding: .6rem 1rem; border-radius: 10px; opacity: 0; pointer-events: none; transition: .25s; z-index: 50; max-width: 90vw; text-align: center; }
 #toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* ---------- login ---------- */
 body.login { background: radial-gradient(ellipse at top, #1A1609 0%, #000 60%); min-height: 100vh; }
-.login-box { max-width: 360px; margin: 0 auto; padding: 7vh 1.2rem 2rem; color: var(--texto); }
+.login-box { max-width: 360px; margin: 0 auto; padding: calc(7vh + env(safe-area-inset-top)) 1.2rem calc(2rem + env(safe-area-inset-bottom)); color: var(--texto); }
 .login-box .logo { display: block; width: 200px; height: 200px; margin: 0 auto .4rem; }
 .login-box h1 { text-align: center; margin-bottom: .2rem; color: var(--oro-claro); font-weight: 500; }
 .login-box > p { text-align: center; color: var(--suave); margin-top: 0; }

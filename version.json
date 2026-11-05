@@ -1,8 +1,9 @@
 {
-    "version":  5,
+    "version":  7,
     "urlActualizaciones":  "https://perfumestore25.github.io/perfumeria/",
     "archivos":  [
                      "app.js",
+                     "apple-touch-icon.png",
                      "config-nube.js",
                      "formato_inventario.xlsx",
                      "importar.js",

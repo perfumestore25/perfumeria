@@ -59,13 +59,32 @@ function toast(msg) {
 }
 
 // Archivos, impresión y compartir: usa el puente nativo en Android, o el navegador si no existe
-function descargar(nombre, contenido, mime) {
+// iPhone/iPad (también iPad que se presenta como Mac)
+const esIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const instaladaIOS = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
+
+async function descargar(nombre, contenido, mime) {
   if (NATIVO?.guardarArchivo) { NATIVO.guardarArchivo(nombre, contenido, mime); return; }
+  const blob = contenido instanceof Blob ? contenido : new Blob([contenido], { type: mime });
+  // En iPhone la forma confiable de guardar es la hoja de Compartir (Guardar en Archivos, WhatsApp, Drive…)
+  if (esIOS()) {
+    const archivo = new File([blob], nombre, { type: mime });
+    if (navigator.canShare?.({ files: [archivo] })) {
+      try { await navigator.share({ files: [archivo] }); return; }
+      catch (e) { if (e.name === 'AbortError') return; } // si iOS no lo permite, se usa la descarga normal
+    }
+  }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([contenido], { type: mime }));
+  a.href = URL.createObjectURL(blob);
   a.download = nombre;
   a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+// Explica cómo instalar la app en iPhone cuando se abre desde Safari sin instalar
+function avisoInstalarIOS() {
+  if (NATIVO || !esIOS() || instaladaIOS()) return '';
+  return `<p class="hint">📲 <b>Instálala en tu iPhone:</b> en Safari toca <b>Compartir</b> <span style="font-size:1.1em">⬆︎</span> y luego <b>"Agregar a pantalla de inicio"</b>. Después ábrela desde el ícono de Perfumes Store.</p>`;
 }
 function imprimir(titulo) {
   if (NATIVO?.imprimir) NATIVO.imprimir(titulo || 'Reporte');
@@ -299,6 +318,7 @@ function renderLogin() {
         <button class="btn primary block grande">Ingresar</button>
       </form>
       ${inicial ? '<p class="hint">Primer ingreso: usuario <b>admin</b>, PIN <b>1234</b>. Cámbialo al entrar.</p>' : ''}
+      ${avisoInstalarIOS()}
     </div>`;
   $('#f-login').onsubmit = e => {
     e.preventDefault();
@@ -440,40 +460,22 @@ function reporteHoy() { rep.periodo = 'dia'; rep.fecha = isoDia(new Date()); ir(
 
 // ---------------------------------------------------------------- VENDER
 let carrito = [];
-let ventaRefId = null;
 let ventaDesc = 0;
 let ventaCliente = '';
 let ventaPago = METODOS[0];
+// Perfume que se está armando: el vendedor elige esencia, frasco y cuánto lleva de cada cosa
+const armar = { esenciaId: null };
 
-function vVender() {
-  const frascos = activos('frasco');
-  const hayRefs = db.referencias.some(r => r.activo !== false);
-  if (!frascos.length || !hayRefs) {
-    return `<div class="card"><h3>Faltan datos para vender perfumes</h3>
-      <p class="muted">${!hayRefs ? 'No hay referencias de perfume registradas. ' : ''}${!frascos.length ? 'No hay frascos registrados en el inventario.' : ''}</p>
-      ${esSup() ? `<div class="acciones">${!hayRefs ? '<button class="btn primary" onclick="editarReferencia()">+ Crear referencia</button>' : ''}${!frascos.length ? `<button class="btn" onclick="editarInsumo(null,'frasco')">+ Crear frasco</button>` : ''}</div>` : '<p>Pide al supervisor que los registre.</p>'}
-    </div>`;
-  }
-  return `
-    ${seccionArmados()}
-    <section class="card">
-      <h3>${db.armados.some(a => a.activo !== false) ? 'Otro perfume' : 'Perfume'}</h3>
-      <div class="buscador">
-        <input id="v-buscar" placeholder="🔍 Buscar referencia por nombre o código" autocomplete="off" oninput="buscarRef(this.value)" onfocus="buscarRef(this.value)">
-        <div id="v-resultados" class="resultados"></div>
-      </div>
-      <div id="v-ref-sel" class="ref-sel muted"></div>
-      <div class="fila">
-        <label>Frasco<select id="v-frasco" onchange="actualizarPrecioPerfume()">${frascos.map(f => `<option value="${f.id}">${esc(f.nombre)} (${fmtNum(f.stock)} disp.)</option>`).join('')}</select></label>
-        <label class="w-cant">Cant.<input id="v-cant" type="number" min="1" value="1" inputmode="numeric"></label>
-      </div>
-      <div class="fila">
-        <label>Precio unitario<input id="v-precio" type="number" inputmode="numeric" ${esSup() ? '' : 'readonly'}></label>
-        <label class="check"><input type="checkbox" id="v-obs"> 🎁 Es obsequio</label>
-      </div>
-      <button class="btn primary block" onclick="agregarPerfume()">+ Agregar perfume</button>
-    </section>
-    <details class="card">
+const r1 = n => Math.round(n * 10) / 10;
+const nombreDeEsencia = es => String(es.nombre).replace(/^\s*esencia\s+(de\s+)?/i, '').trim() || es.nombre;
+const refDeEsencia = id => db.referencias.find(r => r.esenciaId === id && r.activo !== false);
+// Alcohol y fijador que se descuentan: los de Ajustes, o el primero activo del inventario
+const alcoholVenta = () => byId(db.insumos, db.config.alcoholId) || activos('alcohol')[0];
+const fijadorVenta = () => byId(db.insumos, db.config.fijadorId) || activos('fijador')[0];
+
+function seccionProducto() {
+  if (!db.insumos.some(i => i.activo !== false)) return '';
+  return `<details class="card">
       <summary><h3 style="display:inline">Otro producto u obsequio</h3></summary>
       <p class="muted small">Ej.: frasco vacío, muestra, bolsa de regalo, esencia por ml.</p>
       <label>Producto<select id="p-insumo" onchange="actualizarPrecioProducto()">${opcionesInsumos()}</select></label>
@@ -483,67 +485,185 @@ function vVender() {
       </div>
       <label class="check"><input type="checkbox" id="p-obs" checked> 🎁 Es obsequio</label>
       <button class="btn block" onclick="agregarProducto()">+ Agregar</button>
-    </details>
-    <section class="card"><h3>Venta actual</h3><div id="carrito"></div></section>`;
+    </details>`;
+}
+
+function vVender() {
+  const frascos = activos('frasco');
+  const esencias = activos('esencia');
+  const carritoHtml = '<section class="card"><h3>Venta actual</h3><div id="carrito"></div></section>';
+  if (!frascos.length || !esencias.length) {
+    const falta = [!esencias.length && 'esencias', !frascos.length && 'frascos'].filter(Boolean).join(' ni ');
+    return `<div class="card"><h3>Faltan datos para armar perfumes</h3>
+      <p class="muted">No hay ${falta} activos en el inventario.</p>
+      ${esSup() ? `<div class="acciones">
+        ${!esencias.length ? `<button class="btn" onclick="editarInsumo(null,'esencia')">+ Crear esencia</button>` : ''}
+        ${!frascos.length ? `<button class="btn" onclick="editarInsumo(null,'frasco')">+ Crear frasco</button>` : ''}
+        <button class="btn primary" onclick="nuevaCompra()">📥 Ingresar inventario</button></div>` : '<p>Pide al supervisor que los registre en Inventario.</p>'}
+    </div>
+    ${seccionProducto()}${carritoHtml}`;
+  }
+  const al = alcoholVenta(), fi = fijadorVenta();
+  const campoMl = (id, etiqueta, insumo) => `<label>${etiqueta} (ml)<input id="${id}" type="number" step="any" min="0" inputmode="decimal" oninput="pintarArmar()"
+    ${insumo ? '' : 'disabled placeholder="No hay en inventario"'}></label>`;
+  return `
+    ${seccionArmados()}
+    <section class="card">
+      <h3>🧪 Armar perfume</h3>
+      <div class="buscador">
+        <input id="a-buscar" placeholder="🔍 Buscar esencia por nombre o código" autocomplete="off" oninput="buscarEsencia(this.value)" onfocus="buscarEsencia(this.value)">
+        <div id="a-resultados" class="resultados"></div>
+      </div>
+      <div id="a-esencia-sel" class="ref-sel muted"></div>
+      <div class="fila">
+        <label>Frasco<select id="a-frasco" onchange="sugerirMezcla()">${frascos.map(f => `<option value="${f.id}">${f.codigo ? esc(f.codigo) + ' · ' : ''}${esc(f.nombre)} (${fmtNum(f.stock)} disp.)</option>`).join('')}</select></label>
+        <label class="w-cant">Cant.<input id="a-cant" type="number" min="1" value="1" inputmode="numeric" oninput="pintarArmar()"></label>
+      </div>
+      <h4>Contenido de cada frasco</h4>
+      <div class="fila">
+        ${campoMl('a-es', 'Esencia', true)}
+        ${campoMl('a-al', 'Alcohol', al)}
+        ${campoMl('a-fi', 'Fijador', fi)}
+      </div>
+      <div id="a-extras"></div>
+      <button type="button" class="btn block" onclick="agregarElemento()">+ Agregar otro elemento (feromonas, caja, bolsa…)</button>
+      <p id="a-resumen" class="small"></p>
+      <div class="fila">
+        <label>Precio unitario<input id="a-precio" type="number" inputmode="numeric" ${esSup() ? '' : 'readonly'}></label>
+        <label class="check"><input type="checkbox" id="a-obs"> 🎁 Es obsequio</label>
+      </div>
+      <button class="btn primary block" onclick="agregarPerfumeArmado()">+ Agregar perfume a la venta</button>
+    </section>
+    ${seccionProducto()}${carritoHtml}`;
 }
 function despuesVender() {
-  if (!$('#v-frasco')) return;
-  pintarRefSel();
-  actualizarPrecioPerfume();
+  if ($('#a-frasco')) { pintarEsenciaSel(); sugerirMezcla(); }
   actualizarPrecioProducto();
   renderCarrito();
 }
 
-function buscarRef(q) {
+function buscarEsencia(q) {
   q = q.trim().toLowerCase();
-  const box = $('#v-resultados');
-  const rs = db.referencias
-    .filter(r => r.activo !== false && `${r.codigo} ${r.nombre} ${r.inspiracion || ''}`.toLowerCase().includes(q))
-    .sort(porNombre).slice(0, 8);
-  box.innerHTML = rs.map(r => `<button type="button" onclick="elegirRef('${r.id}')"><b>${esc(r.codigo)}</b> ${esc(r.nombre)} <small>${esc(r.genero || '')}${r.inspiracion ? ' · ' + esc(r.inspiracion) : ''}</small></button>`).join('')
+  const es = activos('esencia').filter(i => `${i.codigo || ''} ${i.nombre}`.toLowerCase().includes(q)).sort(porNombre).slice(0, 8);
+  $('#a-resultados').innerHTML = es.map(i => `<button type="button" onclick="elegirEsencia('${i.id}')">
+      <span class="codigo">${esc(i.codigo || '')}</span> <b>${esc(nombreDeEsencia(i))}</b> <small class="${i.stock <= 0 ? 'rojo' : ''}">${fmtNum(i.stock)} ml</small></button>`).join('')
     || (q ? '<div class="muted pad">Sin resultados</div>' : '');
 }
-function elegirRef(id) {
-  ventaRefId = id;
-  $('#v-resultados').innerHTML = '';
-  $('#v-buscar').value = '';
-  pintarRefSel();
-  actualizarPrecioPerfume();
+function elegirEsencia(id) {
+  armar.esenciaId = id;
+  $('#a-resultados').innerHTML = '';
+  $('#a-buscar').value = '';
+  pintarEsenciaSel();
+  sugerirMezcla();
 }
-function pintarRefSel() {
-  const el = $('#v-ref-sel');
-  const r = byId(db.referencias, ventaRefId);
-  if (!r) { el.className = 'ref-sel muted'; el.textContent = 'Ninguna referencia seleccionada'; return; }
-  const es = byId(db.insumos, r.esenciaId);
+function pintarEsenciaSel() {
+  const el = $('#a-esencia-sel');
+  const es = byId(db.insumos, armar.esenciaId);
+  if (!es) { el.className = 'ref-sel muted'; el.textContent = 'Elige la esencia en el buscador'; return; }
   el.className = 'ref-sel';
-  el.innerHTML = `🌸 <b>${esc(r.codigo)} · ${esc(r.nombre)}</b><br><small>Esencia disponible: ${fmtNum(es?.stock)} ml</small>`;
+  el.innerHTML = `🧴 <span class="codigo">${esc(es.codigo || '')}</span> <b>${esc(nombreDeEsencia(es))}</b>
+    <br><small class="${es.stock <= 0 ? 'rojo' : 'muted'}">Disponible: ${fmtNum(es.stock)} ml</small>`;
 }
-function actualizarPrecioPerfume() {
-  const f = byId(db.insumos, $('#v-frasco')?.value);
-  if (!f) return;
-  const r = byId(db.referencias, ventaRefId);
-  $('#v-precio').value = r ? precioPerfume(r, f) : num(f.precioVenta);
+
+// Propone las cantidades según el frasco y la mezcla de la esencia (o la general de Ajustes); el vendedor puede cambiarlas
+function sugerirMezcla() {
+  const f = byId(db.insumos, $('#a-frasco').value);
+  const C = num(f?.capacidad);
+  const ref = refDeEsencia(armar.esenciaId);
+  const { pE, pF } = ref ? pctsRef(ref) : { pE: num(db.config.pctEsencia), pF: num(db.config.pctFijador) };
+  const al = alcoholVenta(), fi = fijadorVenta();
+  const esMl = r1(C * pE / 100), fiMl = fi ? r1(C * pF / 100) : 0;
+  $('#a-es').value = esMl || '';
+  if (fi) $('#a-fi').value = fiMl || '';
+  if (al) $('#a-al').value = Math.max(0, r1(C - esMl - fiMl)) || '';
+  pintarArmar(true);
 }
+
+function filaElemento() {
+  return `<div class="fila a-extra">
+    <label>Elemento<select name="ins" onchange="pintarArmar(true)"><option value="">— Elige el elemento —</option>${opcionesInsumos()}</select></label>
+    <label class="w-cant">Cant.<input name="cant" type="number" step="any" min="0" value="1" inputmode="decimal" oninput="pintarArmar(true)"></label>
+    <button type="button" class="icon-btn sm" style="flex:0 0 auto" onclick="this.closest('.a-extra').remove();pintarArmar(true)" aria-label="Quitar">🗑</button>
+  </div>`;
+}
+function agregarElemento() {
+  $('#a-extras').insertAdjacentHTML('beforeend', filaElemento());
+  pintarArmar(true);
+}
+
+// Lo que lleva UN perfume armado: { insumoId: cantidad } y las partes para describirlo
+function componentesArmar() {
+  const comp = {}, partes = [];
+  const add = (insumo, q, texto) => {
+    if (!insumo || !(q > 0)) return;
+    comp[insumo.id] = (comp[insumo.id] || 0) + q;
+    partes.push(texto || `${fmtNum(q)} ${insumo.unidad} ${insumo.nombre}`);
+  };
+  add(byId(db.insumos, armar.esenciaId), num($('#a-es').value), `${fmtNum(num($('#a-es').value))} ml esencia`);
+  add(alcoholVenta(), num($('#a-al').value), `${fmtNum(num($('#a-al').value))} ml alcohol`);
+  add(fijadorVenta(), num($('#a-fi').value), `${fmtNum(num($('#a-fi').value))} ml fijador`);
+  const extras = [];
+  document.querySelectorAll('.a-extra').forEach(e => {
+    const i = byId(db.insumos, e.querySelector('[name=ins]').value);
+    const q = num(e.querySelector('[name=cant]').value);
+    if (i && q > 0) { add(i, q); extras.push({ i, q }); }
+  });
+  const liquido = Object.entries(comp).reduce((s, [id, q]) => s + (byId(db.insumos, id)?.unidad === 'ml' ? q : 0), 0);
+  return { comp, partes, extras, liquido };
+}
+
+function pintarArmar(recalcularPrecio) {
+  const f = byId(db.insumos, $('#a-frasco').value);
+  const C = num(f?.capacidad);
+  const cant = Math.max(1, Math.round(num($('#a-cant').value)));
+  const { comp, extras, liquido } = componentesArmar();
+  const dif = r1(C - liquido);
+  const faltan = Object.entries({ ...comp, [f?.id]: (comp[f?.id] || 0) + 1 })
+    .map(([id, q]) => ({ i: byId(db.insumos, id), q: q * cant }))
+    .filter(x => x.i && x.i.stock < x.q - 1e-9);
+  $('#a-resumen').innerHTML = `
+    <span class="${Math.abs(dif) < 0.05 ? 'verde' : dif < 0 ? 'rojo' : 'muted'}">Líquido: ${fmtNum(liquido)} de ${fmtNum(C)} ml
+      ${Math.abs(dif) < 0.05 ? '✓' : dif < 0 ? `— se pasa por ${fmtNum(-dif)} ml` : `— quedan ${fmtNum(dif)} ml libres`}</span>
+    ${faltan.length ? `<br><span class="rojo">⚠ Stock insuficiente: ${faltan.map(x => `${esc(x.i.nombre)} (hay ${fmtNum(x.i.stock)} ${x.i.unidad})`).join(', ')}</span>` : ''}`;
+  if (recalcularPrecio && f) {
+    const ref = refDeEsencia(armar.esenciaId);
+    const extra = extras.reduce((s, x) => s + num(x.i.precioVenta) * x.q, 0);
+    $('#a-precio').value = (ref ? precioPerfume(ref, f) : num(f.precioVenta)) + extra;
+  }
+}
+
+function agregarPerfumeArmado() {
+  const es = byId(db.insumos, armar.esenciaId);
+  if (!es) return toast('Primero busca y elige la esencia');
+  const f = byId(db.insumos, $('#a-frasco').value);
+  const { comp, partes, liquido } = componentesArmar();
+  if (!(num($('#a-es').value) > 0)) return toast('Indica cuántos ml de esencia lleva');
+  if (liquido > num(f.capacidad) + 0.05 && !confirm(`El contenido (${fmtNum(liquido)} ml) supera la capacidad del frasco (${fmtNum(f.capacidad)} ml). ¿Agregar de todas formas?`)) return;
+  const cant = Math.max(1, Math.round(num($('#a-cant').value)));
+  const obsequio = $('#a-obs').checked;
+  const ref = refDeEsencia(es.id);
+  carrito.push({
+    tipo: 'perfume', esenciaId: es.id, refId: ref?.id || null, frascoId: f.id, frasco: f.nombre,
+    nombre: nombreDeEsencia(es), detalle: `${f.nombre} · ${partes.join(' · ')}`,
+    unidad: 'und', cant, precio: obsequio ? 0 : num($('#a-precio').value), obsequio, componentes: comp,
+  });
+  armar.esenciaId = null;
+  rerender();
+  toast(obsequio ? 'Obsequio agregado' : 'Perfume agregado a la venta');
+}
+// Consumo de una línea armada a mano: sus componentes por la cantidad, más un frasco por perfume
+function consumoComponentes(l) {
+  const m = {};
+  for (const [id, q] of Object.entries(l.componentes)) m[id] = q * l.cant;
+  m[l.frascoId] = (m[l.frascoId] || 0) + l.cant;
+  return m;
+}
+
 function actualizarPrecioProducto() {
   const i = byId(db.insumos, $('#p-insumo')?.value);
   if (i) $('#p-precio').value = num(i.precioVenta);
 }
 
-function agregarPerfume() {
-  const r = byId(db.referencias, ventaRefId);
-  if (!r) return toast('Primero busca y selecciona una referencia');
-  const f = byId(db.insumos, $('#v-frasco').value);
-  const cant = Math.max(1, Math.round(num($('#v-cant').value)));
-  const obsequio = $('#v-obs').checked;
-  carrito.push({ tipo: 'perfume', refId: r.id, frascoId: f.id, nombre: `${r.codigo} ${r.nombre}`, detalle: f.nombre, unidad: 'und', cant, precio: obsequio ? 0 : num($('#v-precio').value), obsequio });
-  ventaRefId = null;
-  $('#v-cant').value = 1;
-  $('#v-obs').checked = false;
-  pintarRefSel();
-  actualizarPrecioPerfume();
-  renderCarrito();
-  toast(obsequio ? 'Obsequio agregado' : 'Perfume agregado');
-}
 function agregarProducto() {
   const i = byId(db.insumos, $('#p-insumo').value);
   if (!i) return;
@@ -598,7 +718,7 @@ function confirmarVenta() {
   if (!carrito.length) return;
   const consumo = {};
   const items = carrito.map(l => {
-    const m = l.tipo === 'perfume'
+    const m = l.componentes ? consumoComponentes(l) : l.tipo === 'perfume'
       ? consumoPerfume(byId(db.referencias, l.refId), byId(db.insumos, l.frascoId), l.cant, l.mezcla)
       : { [l.insumoId]: l.cant };
     for (const [id, q] of Object.entries(m)) consumo[id] = (consumo[id] || 0) + q;
@@ -868,7 +988,7 @@ function verReferencia(id) {
       ${activos('frasco').map(f => `<tr><td>${esc(f.nombre)}</td><td class="der">${money(precioPerfume(r, f))}</td><td class="der">${alcance(r, f)} und</td></tr>`).join('')}
     </table>
     <div class="acciones">
-      <button class="btn primary" onclick="cerrarModal();ventaRefId='${r.id}';ir('vender')">🛒 Vender</button>
+      <button class="btn primary" onclick="cerrarModal();armar.esenciaId='${r.esenciaId}';ir('vender')">🛒 Vender</button>
       ${esSup() ? `<button class="btn" onclick="editarReferencia('${r.id}')">✏️ Editar</button>` : ''}
     </div>`);
 }
@@ -987,7 +1107,7 @@ function agregarArmado(id) {
   const existente = carrito.find(l => l.armadoId === id && !l.obsequio);
   if (existente) existente.cant++;
   else carrito.push({
-    tipo: 'perfume', armadoId: id, refId: ref.id, frascoId: fr.id, nombre: a.nombre, detalle: `${fr.nombre} · ${mezclaTexto(a)}`,
+    tipo: 'perfume', armadoId: id, refId: ref.id, frascoId: fr.id, frasco: fr.nombre, nombre: a.nombre, detalle: `${fr.nombre} · ${mezclaTexto(a)}`,
     unidad: 'und', cant: 1, precio: num(a.precio), obsequio: false, mezcla: mezclaArmado(a),
   });
   renderCarrito();
@@ -1417,7 +1537,8 @@ function calcularReporte() {
         R.perfumes += l.cant;
         const pr = R.porRef[l.nombre] ||= { cant: 0, total: 0 };
         pr.cant += l.cant; pr.total += l.cant * l.precio;
-        R.porFrasco[l.detalle] = (R.porFrasco[l.detalle] || 0) + l.cant;
+        const fr = l.frasco || byId(db.insumos, l.frascoId)?.nombre || l.detalle;
+        R.porFrasco[fr] = (R.porFrasco[fr] || 0) + l.cant;
       }
     }
   }

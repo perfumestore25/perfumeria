@@ -277,7 +277,7 @@ const vacio = txt => `<li class="muted">${txt}</li>`;
 function opcionesInsumos(sel) {
   return Object.entries(TIPOS).map(([k, t]) => {
     const its = db.insumos.filter(i => i.tipo === k && i.activo !== false).sort(porNombre);
-    return its.length ? `<optgroup label="${t.label}">${its.map(i => `<option value="${i.id}" ${i.id === sel ? 'selected' : ''}>${i.codigo ? esc(i.codigo) + ' · ' : ''}${esc(i.nombre)} (${fmtNum(i.stock)} ${i.unidad})</option>`).join('')}</optgroup>` : '';
+    return its.length ? `<optgroup label="${t.label}">${its.map(i => `<option value="${i.id}" ${i.id === sel ? 'selected' : ''}>${i.codigo ? esc(i.codigo) + ' · ' : ''}${esc(i.nombre)}${i.tipo === 'frasco' && num(i.capacidad) ? ` · ${fmtNum(i.capacidad)} ml` : ''} (${fmtNum(i.stock)} ${i.unidad})</option>`).join('')}</optgroup>` : '';
   }).join('');
 }
 
@@ -516,7 +516,7 @@ function vVender() {
       </div>
       <div id="a-esencia-sel" class="ref-sel muted"></div>
       <div class="fila">
-        <label>Frasco<select id="a-frasco" onchange="sugerirMezcla()">${frascos.map(f => `<option value="${f.id}">${f.codigo ? esc(f.codigo) + ' · ' : ''}${esc(f.nombre)} (${fmtNum(f.stock)} disp.)</option>`).join('')}</select></label>
+        <label>Frasco<select id="a-frasco" onchange="sugerirMezcla()">${frascos.map(f => `<option value="${f.id}">${esc(f.nombre)} · ${fmtNum(f.capacidad)} ml (${fmtNum(f.stock)} disp.)${f.codigo ? ' · ' + esc(f.codigo) : ''}</option>`).join('')}</select></label>
         <label class="w-cant">Cant.<input id="a-cant" type="number" min="1" value="1" inputmode="numeric" oninput="pintarArmar()"></label>
       </div>
       <h4>Contenido de cada frasco</h4>

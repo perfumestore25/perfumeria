@@ -292,3 +292,109 @@ async function descargarFormato() {
   a.download = nombre;
   a.click();
 }
+
+// ---------------------------------------------------------------- exportar inventario
+const r2 = n => Math.round(num(n) * 100) / 100;
+const estadoStock = i => i.activo === false ? 'Inactivo' : num(i.stock) <= 0 ? 'Agotado' : bajo(i) ? 'Bajo' : 'OK';
+// Productos ordenados por tipo (esencias, alcohol, fijador, frascos, otros) y nombre
+const insumosOrdenados = (incluirInactivos = true) => Object.keys(TIPOS)
+  .flatMap(tipo => db.insumos.filter(i => i.tipo === tipo && (incluirInactivos || i.activo !== false)).sort(porNombre));
+
+// Da formato de número a un rango de columnas de una hoja (filas desde `desde` hasta `hasta`, base 0)
+function formatoNumeros(ws, columnas, formato, desde, hasta) {
+  for (let r = desde; r <= hasta; r++) for (const c of columnas) {
+    const celda = ws[XLSX.utils.encode_cell({ r, c })];
+    if (celda && typeof celda.v === 'number') celda.z = formato;
+  }
+}
+
+async function exportarInventario() {
+  try {
+    toast('Preparando el Excel…');
+    await cargarScript('lib/xlsx.full.min.js');
+    const ahora = new Date();
+    const wb = XLSX.utils.book_new();
+
+    // Hoja 1: todos los productos
+    const its = insumosOrdenados();
+    const cab = ['Código', 'Nombre', 'Tipo', 'Stock', 'Unidad', 'Capacidad (ml)', 'Stock mínimo', 'Estado',
+      'Costo unitario', 'Valor en stock', 'Precio de venta', 'Proveedor'];
+    const filas = its.map(i => [
+      i.codigo || '', i.nombre, TIPOS[i.tipo].label, r2(i.stock), i.unidad,
+      i.tipo === 'frasco' ? num(i.capacidad) : '', num(i.stockMin), estadoStock(i),
+      r2(i.costo), Math.round(Math.max(0, num(i.stock)) * num(i.costo)),
+      num(i.precioVenta) || '', byId(db.proveedores, i.proveedorId)?.nombre || '',
+    ]);
+    const total = filas.reduce((s, f) => s + f[9], 0);
+    const ws = XLSX.utils.aoa_to_sheet([
+      [`${db.config.negocio} — Inventario al ${fechaHora(ahora)}`], [], cab, ...filas, [],
+      ['', 'TOTAL VALOR DEL INVENTARIO', '', '', '', '', '', '', '', total],
+    ]);
+    ws['!cols'] = [10, 34, 16, 10, 8, 13, 12, 10, 13, 15, 15, 24].map(wch => ({ wch }));
+    ws['!autofilter'] = { ref: `A3:L${3 + filas.length}` };
+    const fin = 2 + filas.length + 2;
+    formatoNumeros(ws, [3, 5, 6], '#,##0.##', 3, fin);
+    formatoNumeros(ws, [8], '"$"#,##0.00', 3, fin);
+    formatoNumeros(ws, [9, 10], '"$"#,##0', 3, fin);
+    XLSX.utils.book_append_sheet(wb, ws, 'Inventario');
+
+    // Hoja 2: resumen por tipo
+    const resumen = Object.entries(TIPOS).map(([k, t]) => {
+      const g = db.insumos.filter(i => i.tipo === k && i.activo !== false);
+      return [t.label, g.length, r2(g.reduce((s, i) => s + num(i.stock), 0)), TIPOS[k].unidad,
+        Math.round(g.reduce((s, i) => s + Math.max(0, num(i.stock)) * num(i.costo), 0)),
+        g.filter(i => estadoStock(i) === 'Bajo').length, g.filter(i => estadoStock(i) === 'Agotado').length];
+    });
+    const wsR = XLSX.utils.aoa_to_sheet([
+      [`Resumen del inventario — ${fechaHora(ahora)}`], [],
+      ['Tipo', 'Productos', 'Stock total', 'Unidad', 'Valor en stock', 'Con stock bajo', 'Agotados'], ...resumen, [],
+      ['TOTAL', resumen.reduce((s, f) => s + f[1], 0), '', '', resumen.reduce((s, f) => s + f[4], 0),
+        resumen.reduce((s, f) => s + f[5], 0), resumen.reduce((s, f) => s + f[6], 0)],
+    ]);
+    wsR['!cols'] = [18, 11, 13, 8, 16, 14, 11].map(wch => ({ wch }));
+    formatoNumeros(wsR, [2], '#,##0.##', 3, 12);
+    formatoNumeros(wsR, [4], '"$"#,##0', 3, 12);
+    XLSX.utils.book_append_sheet(wb, wsR, 'Resumen');
+
+    // Hoja 3: perfumes armados y para cuántos alcanza el stock
+    if (db.armados.length) {
+      const wsA = XLSX.utils.aoa_to_sheet([
+        ['Código', 'Nombre', 'Esencia', 'Frasco', '% Esencia', '% Alcohol', '% Fijador', 'Precio de venta', 'Alcanza para', 'Activo'],
+        ...db.armados.map(a => [a.codigo, a.nombre, byId(db.referencias, a.refId)?.nombre || '', byId(db.insumos, a.frascoId)?.nombre || '',
+          num(a.pctEsencia), num(a.pctAlcohol), num(a.pctFijador), num(a.precio), disponiblesArmado(a), a.activo === false ? 'No' : 'Sí']),
+      ]);
+      wsA['!cols'] = [10, 28, 24, 26, 10, 10, 10, 15, 12, 8].map(wch => ({ wch }));
+      formatoNumeros(wsA, [7], '"$"#,##0', 1, db.armados.length);
+      XLSX.utils.book_append_sheet(wb, wsA, 'Perfumes armados');
+    }
+
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    await descargar(`Inventario_${isoDia(ahora)}.xlsx`, new Blob([buf], { type: XLSX_MIME }), XLSX_MIME);
+  } catch (e) {
+    console.error(e);
+    alert('No se pudo exportar el inventario: ' + e.message);
+  }
+}
+
+// Inventario completo en pantalla, agrupado por tipo, listo para imprimir o guardar en PDF
+function verInventarioImprimible() {
+  const grupos = Object.entries(TIPOS)
+    .map(([k, t]) => ({ t, its: db.insumos.filter(i => i.tipo === k && i.activo !== false).sort(porNombre) }))
+    .filter(g => g.its.length);
+  const valor = i => Math.max(0, num(i.stock)) * num(i.costo);
+  const total = grupos.reduce((s, g) => s + g.its.reduce((a, i) => a + valor(i), 0), 0);
+  modal('Inventario', `
+    <p class="small muted">${esc(db.config.negocio)} · ${fechaHora(new Date())}</p>
+    ${grupos.map(g => `<h4>${g.t.label} (${g.its.length})</h4>
+      <table class="tabla"><tr><th>Producto</th><th class="der">Stock</th><th class="der">Valor</th></tr>
+      ${g.its.map(i => `<tr><td><span class="codigo">${esc(i.codigo || '')}</span> ${esc(i.nombre)}${i.tipo === 'frasco' && num(i.capacidad) ? ` · ${fmtNum(i.capacidad)} ml` : ''}
+          ${estadoStock(i) !== 'OK' ? `<span class="tag ${estadoStock(i) === 'Bajo' ? 'bajo' : ''}">${estadoStock(i)}</span>` : ''}</td>
+        <td class="der">${fmtNum(i.stock)} ${i.unidad}</td><td class="der">${money(valor(i))}</td></tr>`).join('')}
+      <tr class="tot"><td>Subtotal</td><td></td><td class="der">${money(g.its.reduce((a, i) => a + valor(i), 0))}</td></tr></table>`).join('')
+      || '<p class="muted">No hay productos en el inventario.</p>'}
+    <div class="total"><span>Valor total</span><span>${money(total)}</span></div>
+    <div class="acciones">
+      <button class="btn" onclick="imprimir('Inventario')">🖨 Imprimir / PDF</button>
+      <button class="btn primary" onclick="exportarInventario()">📤 Exportar a Excel</button>
+    </div>`);
+}

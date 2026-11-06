@@ -64,7 +64,12 @@ const esIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.p
 const instaladaIOS = () => window.navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 
 async function descargar(nombre, contenido, mime) {
-  if (NATIVO?.guardarArchivo) { NATIVO.guardarArchivo(nombre, contenido, mime); return; }
+  if (NATIVO?.guardarArchivo) {
+    // Los archivos binarios (Excel) viajan a Android en base64
+    if (contenido instanceof Blob) NATIVO.guardarArchivoBase64(nombre, aBase64(await contenido.arrayBuffer()), mime);
+    else NATIVO.guardarArchivo(nombre, contenido, mime);
+    return;
+  }
   const blob = contenido instanceof Blob ? contenido : new Blob([contenido], { type: mime });
   // En iPhone la forma confiable de guardar es la hoja de Compartir (Guardar en Archivos, WhatsApp, Drive…)
   if (esIOS()) {
@@ -464,7 +469,9 @@ let ventaDesc = 0;
 let ventaCliente = '';
 let ventaPago = METODOS[0];
 // Perfume que se está armando: el vendedor elige esencia, frasco y cuánto lleva de cada cosa
-const armar = { esenciaId: null };
+const armar = { esenciaId: null, mezcla: 'normal' };
+// Mezclas rápidas: "normal" usa los % de la esencia o de Ajustes; "P 1.1" es una parte de esencia por una de alcohol
+const MEZCLAS = { normal: 'Normal', '1.1': 'P 1.1 (mitad esencia, mitad alcohol)' };
 
 const r1 = n => Math.round(n * 10) / 10;
 const nombreDeEsencia = es => String(es.nombre).replace(/^\s*esencia\s+(de\s+)?/i, '').trim() || es.nombre;
@@ -519,6 +526,8 @@ function vVender() {
         <label>Frasco<select id="a-frasco" onchange="sugerirMezcla()">${frascos.map(f => `<option value="${f.id}">${esc(f.nombre)} · ${fmtNum(f.capacidad)} ml (${fmtNum(f.stock)} disp.)${f.codigo ? ' · ' + esc(f.codigo) : ''}</option>`).join('')}</select></label>
         <label class="w-cant">Cant.<input id="a-cant" type="number" min="1" value="1" inputmode="numeric" oninput="pintarArmar()"></label>
       </div>
+      <h4>Mezcla</h4>
+      <div class="tabs">${Object.entries(MEZCLAS).map(([k, t]) => `<button type="button" class="${armar.mezcla === k ? 'activo' : ''}" onclick="elegirMezcla('${k}')">${t}</button>`).join('')}</div>
       <h4>Contenido de cada frasco</h4>
       <div class="fila">
         ${campoMl('a-es', 'Esencia', true)}
@@ -566,11 +575,17 @@ function pintarEsenciaSel() {
 }
 
 // Propone las cantidades según el frasco y la mezcla de la esencia (o la general de Ajustes); el vendedor puede cambiarlas
+function elegirMezcla(k) {
+  armar.mezcla = k;
+  document.querySelectorAll('[onclick^="elegirMezcla"]').forEach(b => b.classList.toggle('activo', b.getAttribute('onclick') === `elegirMezcla('${k}')`));
+  sugerirMezcla();
+}
 function sugerirMezcla() {
   const f = byId(db.insumos, $('#a-frasco').value);
   const C = num(f?.capacidad);
   const ref = refDeEsencia(armar.esenciaId);
-  const { pE, pF } = ref ? pctsRef(ref) : { pE: num(db.config.pctEsencia), pF: num(db.config.pctFijador) };
+  const { pE, pF } = armar.mezcla === '1.1' ? { pE: 50, pF: 0 }
+    : ref ? pctsRef(ref) : { pE: num(db.config.pctEsencia), pF: num(db.config.pctFijador) };
   const al = alcoholVenta(), fi = fijadorVenta();
   const esMl = r1(C * pE / 100), fiMl = fi ? r1(C * pF / 100) : 0;
   $('#a-es').value = esMl || '';
@@ -644,7 +659,7 @@ function agregarPerfumeArmado() {
   const ref = refDeEsencia(es.id);
   carrito.push({
     tipo: 'perfume', esenciaId: es.id, refId: ref?.id || null, frascoId: f.id, frasco: f.nombre,
-    nombre: nombreDeEsencia(es), detalle: `${f.nombre} · ${partes.join(' · ')}`,
+    nombre: nombreDeEsencia(es), detalle: [f.nombre, armar.mezcla === '1.1' && 'P 1.1', ...partes].filter(Boolean).join(' · '),
     unidad: 'und', cant, precio: obsequio ? 0 : num($('#a-precio').value), obsequio, componentes: comp,
   });
   armar.esenciaId = null;
@@ -830,6 +845,10 @@ function vInventario() {
         <button class="btn" onclick="$('#archivo-excel').click()">📄 Importar desde Excel</button>
         <button class="btn" onclick="descargarFormato()">⬇ Descargar formato</button>
       </div>
+      <div class="acciones" style="margin:0 0 .75rem">
+        <button class="btn" onclick="exportarInventario()">📤 Exportar inventario (Excel)</button>
+        <button class="btn" onclick="verInventarioImprimible()">🖨 Ver / imprimir inventario</button>
+      </div>
       <input type="file" id="archivo-excel" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" style="display:none" onchange="importarExcel(this.files[0]);this.value=''">` : ''}
     <div class="tabs">${Object.entries(TIPOS).map(([k, t]) => `<button class="${k === invTab ? 'activo' : ''}" onclick="invTab='${k}';render()">${t.label}</button>`).join('')}</div>
     <div class="card fila">
@@ -868,6 +887,7 @@ function verInsumo(id) {
     ${refs.length ? `<p class="small muted">Usada en: ${refs.map(r => esc(r.nombre)).join(', ')}</p>` : ''}
     ${esSup() ? `
       <div class="acciones"><button class="btn" onclick="editarInsumo('${id}')">✏️ Editar</button><button class="btn primary" onclick="ajustarStock('${id}')">± Ajustar stock</button></div>
+      <button class="btn danger block" onclick="eliminarInsumo('${id}')">🗑 Eliminar ${i.tipo === 'esencia' ? 'esta esencia' : 'este producto'}</button>
       <h4>Movimientos recientes</h4>
       <ul class="lista mini" id="movs">${vacio('Cargando…')}</ul>` : ''}`);
   if (!esSup()) return;
@@ -876,6 +896,33 @@ function verInsumo(id) {
     if (ul) ul.innerHTML = movs.map(m => `<li><div>${esc(m.tipo)} <small class="muted">${esc(m.ref || '')}${m.nota ? ' · ' + esc(m.nota) : ''}</small><br><small class="muted">${fechaHora(m.fecha)} · ${esc(nombreUsuario(m.userId))}</small></div>
       <div class="der"><span class="${m.cantidad < 0 ? 'rojo' : 'verde'}">${m.cantidad > 0 ? '+' : ''}${fmtNum(m.cantidad)}</span><br><small class="muted">Saldo ${fmtNum(m.saldo)}</small></div></li>`).join('') || vacio('Sin movimientos');
   }).catch(() => { const ul = $('#movs'); if (ul) ul.innerHTML = vacio('Sin conexión para ver el historial'); });
+}
+
+// Borra un producto mal ingresado (solo supervisor). Las ventas e ingresos ya registrados conservan su nombre;
+// las referencias y perfumes armados que usaban esa esencia o ese frasco también se borran porque quedarían incompletos.
+function eliminarInsumo(id) {
+  const i = byId(db.insumos, id);
+  if (!i || !esSup()) return;
+  const refs = db.referencias.filter(r => r.esenciaId === id);
+  const arms = db.armados.filter(a => a.frascoId === id || refs.some(r => r.id === a.refId));
+  const avisos = [
+    num(i.stock) ? `• Tiene ${fmtNum(i.stock)} ${i.unidad} en stock, que dejarán de contarse.` : '',
+    refs.length ? `• Se borrarán ${refs.length} referencia(s): ${refs.map(r => r.nombre).join(', ')}.` : '',
+    arms.length ? `• Se borrarán ${arms.length} perfume(s) armado(s): ${arms.map(a => a.nombre).join(', ')}.` : '',
+    db.config.alcoholId === id || db.config.fijadorId === id ? '• Es el alcohol o fijador que se usa al vender: revisa Ajustes después.' : '',
+  ].filter(Boolean).join('\n');
+  if (!confirm(`¿Eliminar "${i.nombre}" (${i.codigo || TIPOS[i.tipo].label})?\n\n${avisos ? avisos + '\n\n' : ''}Las ventas ya registradas no cambian. Esta acción no se puede deshacer.`)) return;
+  for (const a of arms) nube.quitar('armados', a.id);
+  for (const r of refs) nube.quitar('referencias', r.id);
+  nube.quitar('insumos', id);
+  db.armados = db.armados.filter(a => !arms.includes(a));
+  db.referencias = db.referencias.filter(r => !refs.includes(r));
+  db.insumos = db.insumos.filter(x => x.id !== id);
+  if (armar.esenciaId === id) armar.esenciaId = null;
+  guardar();
+  cerrarModal();
+  rerender();
+  toast(`${i.nombre} eliminado`);
 }
 
 function editarInsumo(id, tipoDef = 'esencia') {

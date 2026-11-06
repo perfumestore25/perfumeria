@@ -35,7 +35,8 @@ function numExcel(v) {
 
 const TIPO_TEXTO = {
   esencia: 'esencia', esencias: 'esencia', alcohol: 'alcohol', alcoholes: 'alcohol', fijador: 'fijador', fijadores: 'fijador',
-  frasco: 'frasco', frascos: 'frasco', envase: 'frasco', otro: 'otro', otros: 'otro', empaque: 'otro', empaques: 'otro',
+  frasco: 'frasco', frascos: 'frasco', envase: 'frasco',
+  replica: 'replica', replicas: 'replica', 'replica 1.1': 'replica', 'replicas 1.1': 'replica', '1.1': 'replica', 'p 1.1': 'replica', 'p1.1': 'replica', 'p.1.1': 'replica', otro: 'otro', otros: 'otro', empaque: 'otro', empaques: 'otro',
 };
 
 // Lee una hoja y arma objetos según las palabras del encabezado de cada columna

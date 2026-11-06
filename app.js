@@ -15,6 +15,7 @@ const TIPOS = {
   alcohol: { label: 'Alcohol', unidad: 'ml' },
   fijador: { label: 'Fijador', unidad: 'ml' },
   frasco: { label: 'Frascos', unidad: 'und' },
+  replica: { label: 'Réplicas 1.1', unidad: 'und' }, // perfumes que llegan ya armados (réplica de la original)
   otro: { label: 'Otros / empaques', unidad: 'und' },
 };
 const METODOS = ['Efectivo', 'Transferencia', 'Nequi', 'Daviplata', 'Tarjeta'];
@@ -130,7 +131,7 @@ function migrar(d) {
 }
 
 // Códigos automáticos de productos: ES-001 esencias, AL alcohol, FJ fijador, FR frascos, OT otros
-const PREFIJOS = { esencia: 'ES', alcohol: 'AL', fijador: 'FJ', frasco: 'FR', otro: 'OT' };
+const PREFIJOS = { esencia: 'ES', alcohol: 'AL', fijador: 'FJ', frasco: 'FR', replica: 'RP', otro: 'OT' };
 function generarCodigo(lista, prefijo) {
   const n = lista.reduce((m, x) => {
     const c = String(x.codigo || '').toUpperCase();
@@ -430,7 +431,7 @@ function vInicio() {
   let perfumes = 0, obsequios = 0;
   for (const v of vs) for (const l of v.items) {
     if (l.obsequio) obsequios += l.unidad === 'und' || l.tipo === 'perfume' ? l.cant : 1;
-    else if (l.tipo === 'perfume') perfumes += l.cant;
+    else if (l.tipo === 'perfume' || l.tipo === 'replica') perfumes += l.cant;
   }
   const bajos = db.insumos.filter(bajo).sort(porNombre);
   const diasSinRespaldo = db.config.ultimoRespaldo ? Math.floor((Date.now() - new Date(db.config.ultimoRespaldo)) / 864e5) : null;
@@ -469,9 +470,7 @@ let ventaDesc = 0;
 let ventaCliente = '';
 let ventaPago = METODOS[0];
 // Perfume que se está armando: el vendedor elige esencia, frasco y cuánto lleva de cada cosa
-const armar = { esenciaId: null, mezcla: 'normal' };
-// Mezclas rápidas: "normal" usa los % de la esencia o de Ajustes; "P 1.1" es una parte de esencia por una de alcohol
-const MEZCLAS = { normal: 'Normal', '1.1': 'P 1.1 (mitad esencia, mitad alcohol)' };
+const armar = { esenciaId: null };
 
 const r1 = n => Math.round(n * 10) / 10;
 const nombreDeEsencia = es => String(es.nombre).replace(/^\s*esencia\s+(de\s+)?/i, '').trim() || es.nombre;
@@ -479,6 +478,35 @@ const refDeEsencia = id => db.referencias.find(r => r.esenciaId === id && r.acti
 // Alcohol y fijador que se descuentan: los de Ajustes, o el primero activo del inventario
 const alcoholVenta = () => byId(db.insumos, db.config.alcoholId) || activos('alcohol')[0];
 const fijadorVenta = () => byId(db.insumos, db.config.fijadorId) || activos('fijador')[0];
+
+// ---- Réplicas 1.1: perfumes que llegan listos de fábrica; se venden por unidad y descuentan su propio stock
+const replicasActivas = () => activos('replica');
+function seccionReplicas() {
+  const rs = replicasActivas();
+  if (!rs.length) return '';
+  return `<section class="card"><h3>🧴 Réplicas 1.1</h3>
+    ${rs.length > 6 ? '<input placeholder="🔍 Buscar réplica" oninput="filtrarReplicas(this.value)" style="margin:0 0 .6rem">' : ''}
+    <div class="armados" id="lista-replicas">${botonesReplicas(rs)}</div>
+    <p class="small muted" style="margin:.5rem 0 0">Vienen listas: toca para agregar 1 a la venta. En la venta, 🎁 la marca como obsequio.</p></section>`;
+}
+function botonesReplicas(rs) {
+  return rs.map(i => `<button class="armado ${num(i.stock) < 1 ? 'sin-stock' : ''}" onclick="agregarReplica('${i.id}')">
+      <b>${esc(i.nombre)}</b><small>${esc(i.codigo || '')}</small>
+      <small>${num(i.stock) < 1 ? 'Sin stock' : `Quedan ${fmtNum(i.stock)}`}</small><div class="precio">${money(i.precioVenta)}</div></button>`).join('')
+    || '<p class="muted">Sin resultados</p>';
+}
+function filtrarReplicas(q) {
+  q = q.trim().toLowerCase();
+  $('#lista-replicas').innerHTML = botonesReplicas(replicasActivas().filter(i => `${i.codigo || ''} ${i.nombre}`.toLowerCase().includes(q)));
+}
+function agregarReplica(id) {
+  const i = byId(db.insumos, id);
+  const existente = carrito.find(l => l.tipo === 'replica' && l.insumoId === id && !l.obsequio);
+  if (existente) existente.cant++;
+  else carrito.push({ tipo: 'replica', insumoId: id, nombre: i.nombre, detalle: 'Réplica 1.1', unidad: 'und', cant: 1, precio: num(i.precioVenta), obsequio: false });
+  renderCarrito();
+  toast(`${i.nombre} agregada`);
+}
 
 function seccionProducto() {
   if (!db.insumos.some(i => i.activo !== false)) return '';
@@ -508,12 +536,13 @@ function vVender() {
         ${!frascos.length ? `<button class="btn" onclick="editarInsumo(null,'frasco')">+ Crear frasco</button>` : ''}
         <button class="btn primary" onclick="nuevaCompra()">📥 Ingresar inventario</button></div>` : '<p>Pide al supervisor que los registre en Inventario.</p>'}
     </div>
-    ${seccionProducto()}${carritoHtml}`;
+    ${seccionReplicas()}${seccionProducto()}${carritoHtml}`;
   }
   const al = alcoholVenta(), fi = fijadorVenta();
   const campoMl = (id, etiqueta, insumo) => `<label>${etiqueta} (ml)<input id="${id}" type="number" step="any" min="0" inputmode="decimal" oninput="pintarArmar()"
     ${insumo ? '' : 'disabled placeholder="No hay en inventario"'}></label>`;
   return `
+    ${seccionReplicas()}
     ${seccionArmados()}
     <section class="card">
       <h3>🧪 Armar perfume</h3>
@@ -526,8 +555,6 @@ function vVender() {
         <label>Frasco<select id="a-frasco" onchange="sugerirMezcla()">${frascos.map(f => `<option value="${f.id}">${esc(f.nombre)} · ${fmtNum(f.capacidad)} ml (${fmtNum(f.stock)} disp.)${f.codigo ? ' · ' + esc(f.codigo) : ''}</option>`).join('')}</select></label>
         <label class="w-cant">Cant.<input id="a-cant" type="number" min="1" value="1" inputmode="numeric" oninput="pintarArmar()"></label>
       </div>
-      <h4>Mezcla</h4>
-      <div class="tabs">${Object.entries(MEZCLAS).map(([k, t]) => `<button type="button" class="${armar.mezcla === k ? 'activo' : ''}" onclick="elegirMezcla('${k}')">${t}</button>`).join('')}</div>
       <h4>Contenido de cada frasco</h4>
       <div class="fila">
         ${campoMl('a-es', 'Esencia', true)}
@@ -575,17 +602,11 @@ function pintarEsenciaSel() {
 }
 
 // Propone las cantidades según el frasco y la mezcla de la esencia (o la general de Ajustes); el vendedor puede cambiarlas
-function elegirMezcla(k) {
-  armar.mezcla = k;
-  document.querySelectorAll('[onclick^="elegirMezcla"]').forEach(b => b.classList.toggle('activo', b.getAttribute('onclick') === `elegirMezcla('${k}')`));
-  sugerirMezcla();
-}
 function sugerirMezcla() {
   const f = byId(db.insumos, $('#a-frasco').value);
   const C = num(f?.capacidad);
   const ref = refDeEsencia(armar.esenciaId);
-  const { pE, pF } = armar.mezcla === '1.1' ? { pE: 50, pF: 0 }
-    : ref ? pctsRef(ref) : { pE: num(db.config.pctEsencia), pF: num(db.config.pctFijador) };
+  const { pE, pF } = ref ? pctsRef(ref) : { pE: num(db.config.pctEsencia), pF: num(db.config.pctFijador) };
   const al = alcoholVenta(), fi = fijadorVenta();
   const esMl = r1(C * pE / 100), fiMl = fi ? r1(C * pF / 100) : 0;
   $('#a-es').value = esMl || '';
@@ -659,7 +680,7 @@ function agregarPerfumeArmado() {
   const ref = refDeEsencia(es.id);
   carrito.push({
     tipo: 'perfume', esenciaId: es.id, refId: ref?.id || null, frascoId: f.id, frasco: f.nombre,
-    nombre: nombreDeEsencia(es), detalle: [f.nombre, armar.mezcla === '1.1' && 'P 1.1', ...partes].filter(Boolean).join(' · '),
+    nombre: nombreDeEsencia(es), detalle: [f.nombre, ...partes].join(' · '),
     unidad: 'und', cant, precio: obsequio ? 0 : num($('#a-precio').value), obsequio, componentes: comp,
   });
   armar.esenciaId = null;
@@ -971,7 +992,7 @@ function editarInsumo(id, tipoDef = 'esencia') {
 function tipoInsumoCambio(f, cambiarUnidad) {
   const t = f.tipo.value;
   f.querySelectorAll('.solo-frasco').forEach(e => e.style.display = t === 'frasco' ? 'block' : 'none');
-  f.querySelectorAll('.solo-venta').forEach(e => e.style.display = t === 'frasco' || t === 'otro' ? 'block' : 'none');
+  f.querySelectorAll('.solo-venta').forEach(e => e.style.display = ['frasco', 'replica', 'otro'].includes(t) ? 'block' : 'none');
   if (cambiarUnidad) f.unidad.value = TIPOS[t].unidad;
 }
 
@@ -1580,11 +1601,11 @@ function calcularReporte() {
         o.cant += l.cant; o.costo += l.costo;
         continue;
       }
-      if (l.tipo === 'perfume') {
+      if (l.tipo === 'perfume' || l.tipo === 'replica') {
         R.perfumes += l.cant;
         const pr = R.porRef[l.nombre] ||= { cant: 0, total: 0 };
         pr.cant += l.cant; pr.total += l.cant * l.precio;
-        const fr = l.frasco || byId(db.insumos, l.frascoId)?.nombre || l.detalle;
+        const fr = l.tipo === 'replica' ? 'Réplicas 1.1' : l.frasco || byId(db.insumos, l.frascoId)?.nombre || l.detalle;
         R.porFrasco[fr] = (R.porFrasco[fr] || 0) + l.cant;
       }
     }

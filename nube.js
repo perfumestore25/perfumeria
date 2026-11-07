@@ -237,6 +237,31 @@ async function movimientosDe(insumoId) {
   return s.docs.map(d => d.data());
 }
 
+// Reinicio desde cero: borra todos los documentos (y los movimientos de stock) y deja la configuración y los
+// productos base. Si `usuariosNuevos` es null se conservan los usuarios que ya existen.
+async function reiniciarNube(config, insumos, usuariosNuevos) {
+  const refs = [];
+  for (const col of COLECCIONES) {
+    if (col === 'usuarios' && !usuariosNuevos) continue;
+    (await NUBE.fs.collection(col).get({ source: 'server' })).forEach(d => refs.push(d.ref));
+  }
+  (await NUBE.fs.collectionGroup('movimientos').get({ source: 'server' })).forEach(d => refs.push(d.ref));
+  for (let i = 0; i < refs.length; i += 400) {
+    const b = NUBE.fs.batch();
+    refs.slice(i, i + 400).forEach(r => b.delete(r));
+    await b.commit();
+  }
+  // La configuración se reemplaza (no se borra) para que la nube no vuelva a crear el admin por su cuenta
+  const b = NUBE.fs.batch();
+  b.set(NUBE.fs.collection('config').doc('general'), limpiar(config));
+  for (const i of insumos) b.set(NUBE.fs.collection('insumos').doc(i.id), limpiar(i));
+  for (const u of usuariosNuevos || []) b.set(NUBE.fs.collection('usuarios').doc(u.id), limpiar(u));
+  await b.commit();
+  NUBE.historico.ventas.clear();
+  NUBE.historico.gastos.clear();
+  NUBE.historicoDesde = inicioVentana();
+}
+
 // Respaldo completo (incluye todas las ventas y movimientos, no solo los sincronizados)
 async function datosCompletos() {
   if (!NUBE.activa) return db;

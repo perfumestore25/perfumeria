@@ -1815,6 +1815,11 @@ function vAjustes() {
       </div>
       <input type="file" id="archivo-respaldo" accept=".json,application/json" style="display:none" onchange="importarRespaldo(this.files[0]);this.value=''">
     </section>
+    <section class="card">
+      <h3>⚠️ Reiniciar la app desde cero</h3>
+      <p class="small">Borra inventario, ventas, gastos, clientes, proveedores, referencias y perfumes armados${NUBE.activa ? ' <b>en todos los celulares</b>' : ''}. Pide tu PIN para confirmar y antes guarda una copia de seguridad.</p>
+      <button class="btn danger block" onclick="pedirReinicio()">🗑 Reiniciar la app</button>
+    </section>
     <p class="small muted" style="text-align:center">${db.referencias.length} referencias · ${db.insumos.length} insumos · ${db.ventas.length} ventas · ${db.clientes.length} clientes</p>`;
 }
 VISTAS.ajustes.despues = () => {
@@ -1903,6 +1908,67 @@ function conectarNube() {
   if (!confirm(`Se conectará al proyecto "${cfg.projectId}". La app se reiniciará y pedirá el correo y la contraseña del negocio.\n\n¿Continuar?`)) return;
   localStorage.setItem('perfumeria_firebase', JSON.stringify(cfg));
   location.reload();
+}
+
+// ---- reiniciar la app desde cero (solo supervisor; confirma con su PIN y la palabra BORRAR)
+function pedirReinicio() {
+  const f = formModal('⚠️ Reiniciar la app desde cero', `
+    <div class="aviso error">Se borrarán <b>todos</b> los datos: inventario (esencias, réplicas, frascos…), referencias, perfumes armados,
+      ventas, gastos, clientes, proveedores e ingresos de inventario${NUBE.activa ? ', en <b>todos los celulares</b> conectados' : ''}.
+      <b>No se puede deshacer.</b></div>
+    <p class="small">Antes de borrar, la app descargará automáticamente una copia de seguridad con todo lo que hay hoy.</p>
+    ${casilla('Conservar usuarios (supervisores, vendedores y sus PIN)', 'conservarUsuarios', true)}
+    ${casilla('Conservar ajustes del negocio (nombre, NIT, teléfono, mensaje del recibo y mezcla)', 'conservarAjustes', true)}
+    ${campo('Tu PIN de supervisor *', 'pin', '', 'type="password" inputmode="numeric" required autocomplete="off"')}
+    ${campo('Escribe BORRAR para confirmar *', 'confirmar', '', 'required autocomplete="off" autocapitalize="characters"')}`,
+  d => {
+    if (sesion.pin !== hashPin(d.pin)) { toast('PIN incorrecto'); return false; }
+    if (d.confirmar.trim().toUpperCase() !== 'BORRAR') { toast('Escribe la palabra BORRAR para confirmar'); return false; }
+    if (NUBE.activa && !navigator.onLine) { toast('Se necesita internet para reiniciar los datos de la nube'); return false; }
+    reiniciarApp({ usuarios: !!d.conservarUsuarios, ajustes: !!d.conservarAjustes });
+  });
+  const boton = f.querySelector('.btn.primary');
+  boton.textContent = '🗑 Borrar todo y empezar de cero';
+  boton.className = 'btn danger';
+}
+
+async function reiniciarApp(conservar) {
+  modal('Reiniciando…', '<p>Guardando la copia de seguridad y borrando los datos. <b>No cierres la app.</b></p>');
+  const base = dbInicial();
+  const ajustes = ['negocio', 'nit', 'telefono', 'mensajeRecibo', 'pctEsencia', 'pctFijador'];
+  const config = {
+    ...base.config,
+    ...(conservar.ajustes ? Object.fromEntries(ajustes.map(k => [k, db.config[k]])) : {}),
+    ultimoRespaldo: new Date().toISOString(),
+  };
+  try {
+    // 1) Copia de seguridad completa (si falla, no se borra nada)
+    const datos = await datosCompletos();
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    await descargar(`respaldo_antes_de_reiniciar_${stamp}.json`, JSON.stringify(datos), 'application/json');
+    // 2) Borrar y dejar solo lo básico: alcohol, fijador, frascos de 30/50/100 ml en cero y, si no se conservan, el usuario admin
+    const usuarios = conservar.usuarios ? datos.usuarios : base.usuarios;
+    if (NUBE.activa) await reiniciarNube(config, base.insumos, conservar.usuarios ? null : base.usuarios);
+    else { db = { ...base, config, usuarios }; guardar(); }
+  } catch (e) {
+    console.error(e);
+    cerrarModal();
+    alert('No se pudo reiniciar. No se borró nada.\n\n' + e.message);
+    return;
+  }
+  carrito = [];
+  ventasVistas.clear();
+  localStorage.removeItem(KEY_DB + '_subido');
+  cerrarModal();
+  if (!conservar.usuarios) {
+    salir();
+    alert('La app quedó en cero. Entra con usuario admin y PIN 1234, y cámbialo.');
+    return;
+  }
+  sesion = byId(db.usuarios, sesion.id) || sesion;
+  renderShell();
+  ir('inicio');
+  toast('La app quedó en cero');
 }
 
 // Datos que el teléfono guardó en modo solo dispositivo (antes de conectar la nube)
